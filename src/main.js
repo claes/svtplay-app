@@ -65,6 +65,29 @@ async function createWindow() {
     if (input.alt || input.control || input.meta) return
     const { key, code } = input
 
+    // Global quit on 'Q' unless focused in a text field/area/contentEditable
+    if (key === 'q' || key === 'Q') {
+      const jsIsEditable = `(() => {
+        function isEditable(el){
+          if (!el) return false;
+          const tag = (el.tagName||'').toLowerCase();
+          if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+          if (el.isContentEditable) return true;
+          return false;
+        }
+        let el = document.activeElement;
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+        return isEditable(el);
+      })()`
+      win.webContents.executeJavaScript(jsIsEditable).then((isEd) => {
+        if (!isEd) app.quit()
+      }).catch(() => {
+        // If we can't determine, assume not editing and quit
+        app.quit()
+      })
+      return
+    }
+
     // If we're replaying synthetic Arrow events from a remap, let them through untouched
     if (win.__suppressSpatial && win.__suppressSpatial > 0) {
       win.__suppressSpatial -= 1

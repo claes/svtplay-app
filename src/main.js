@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, session, dialog } from 'electron'
+import { app, BrowserWindow, shell, session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 
@@ -295,17 +295,6 @@ async function createWindow() {
     })();`)
   } catch {}
 
-  // Show a simple startup dialog so you can confirm it's working.
-  // We await loadURL above, so the page is already loaded; show the dialog now.
-  try {
-    await dialog.showMessageBox(win, {
-      type: 'info',
-      buttons: ['OK'],
-      title: 'SVT Play App',
-      message: 'Electron wrapper loaded',
-      detail: 'If you see this, the app is active. Arrow-key focus is enabled outside text inputs.'
-    })
-  } catch {}
 }
 
 // Minimal permissions policy for this app

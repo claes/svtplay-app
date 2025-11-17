@@ -69,7 +69,7 @@
             meta = with pkgs.lib; {
               description = "Minimal Electron wrapper for svtplay.se";
               homepage = "https://www.svtplay.se/";
-              # License intentionally omitted; this package only ships the wrapper code.
+              license = licenses.gpl3Plus;
               maintainers = [];
               platforms = platforms.linux ++ platforms.darwin;
               mainProgram = "svtplay-app";

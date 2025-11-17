@@ -4,7 +4,7 @@
   "description": "Minimal Electron app that wraps svtplay.se",
   "main": "src/main.js",
   "author": "",
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "start": "electron .",
@@ -16,4 +16,3 @@
     "electron": "^31.0.0"
   }
 }
-

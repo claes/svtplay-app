@@ -1,0 +1,19 @@
+{
+  "name": "svtplay-app",
+  "version": "0.1.0",
+  "description": "Minimal Electron app that wraps svtplay.se",
+  "main": "src/main.js",
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "NODE_ENV=development electron .",
+    "package": "echo 'Packaging requires electron-builder or forge; not configured' && exit 1"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
+

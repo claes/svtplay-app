@@ -34,6 +34,10 @@ async function createWindow() {
     }
   })
 
+  // Flag to allow remapped keys (e.g., numpad 2/4/6/8) to send native Arrow events
+  // without being intercepted by our spatial navigation handler below.
+  win.__suppressSpatial = 0
+
   // Keep navigation inside the app for svtplay.se, open others externally
   const handleExternal = (targetUrl) => {
     try {
@@ -58,7 +62,77 @@ async function createWindow() {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     if (input.alt || input.control || input.meta) return
-    const key = input.key
+    const { key, code } = input
+
+    // If we're replaying synthetic Arrow events from a remap, let them through untouched
+    if (win.__suppressSpatial && win.__suppressSpatial > 0) {
+      win.__suppressSpatial -= 1
+      return
+    }
+
+    // Map numeric keypad to native key behavior (do NOT use spatial nav)
+    // 2=Up, 4=Left, 6=Right, 8=Down, 1=Shift+Tab (Alt+Tab not appropriate in-page), 3=Tab
+    const isNumpad = typeof code === 'string' && code.startsWith('Numpad')
+    if (isNumpad) {
+      const sendKey = (kc, opts = {}) => {
+        const modifiers = opts.modifiers || []
+        if (opts.pressOnly) {
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: kc, modifiers })
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: kc, modifiers })
+        } else {
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: kc, modifiers })
+        }
+      }
+      // Prevent default to avoid text entry of numbers
+      event.preventDefault()
+      switch (code) {
+        case 'Numpad2':
+          // Allow these Arrow events to bypass spatial navigation handler
+          win.__suppressSpatial += 2
+          sendKey('ArrowUp', { pressOnly: true })
+          return
+        case 'Numpad4':
+          win.__suppressSpatial += 2
+          sendKey('ArrowLeft', { pressOnly: true })
+          return
+        case 'Numpad6':
+          win.__suppressSpatial += 2
+          sendKey('ArrowRight', { pressOnly: true })
+          return
+        case 'Numpad8':
+          win.__suppressSpatial += 2
+          sendKey('ArrowDown', { pressOnly: true })
+          return
+        case 'Numpad3':
+          sendKey('Tab', { pressOnly: true })
+          return
+        case 'Numpad1':
+          // Use Shift+Tab to move focus backwards within the page
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' })
+          sendKey('Tab', { pressOnly: true, modifiers: ['shift'] })
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' })
+          return
+        default:
+          // Let other numpad keys pass through as-is (digits)
+          return
+      }
+    }
+
+    // Also support top-row digits on some remotes sending 'DigitX'
+    if (code === 'Digit2' || code === 'Digit4' || code === 'Digit6' || code === 'Digit8') {
+      event.preventDefault()
+      const send = (kc) => {
+        win.__suppressSpatial += 2
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: kc })
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: kc })
+      }
+      if (code === 'Digit2') send('ArrowUp')
+      else if (code === 'Digit4') send('ArrowLeft')
+      else if (code === 'Digit6') send('ArrowRight')
+      else if (code === 'Digit8') send('ArrowDown')
+      return
+    }
+
     let dir = null
     if (key === 'ArrowLeft' || key === 'Left') dir = 'left'
     else if (key === 'ArrowRight' || key === 'Right') dir = 'right'
@@ -75,7 +149,6 @@ async function createWindow() {
       try {
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' })
         win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' })
-        // Try navigating again on next frame
         setTimeout(() => {
           win.webContents.executeJavaScript(js).catch(() => {})
         }, 30)

@@ -22,6 +22,7 @@ async function createWindow() {
     title: 'SVT Play',
     backgroundColor: '#111111',
     autoHideMenuBar: true,
+    fullscreen: true,
     icon: hasIcon ? iconPath : undefined,
     webPreferences: {
       preload: path.join(appPath, 'src', 'preload.js'),

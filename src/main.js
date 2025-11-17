@@ -1,6 +1,8 @@
 import { app, BrowserWindow, shell, session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import http from 'node:http'
+import { URL as NodeURL } from 'node:url'
 
 // Improve media autoplay and performance for video-heavy sites
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -8,10 +10,116 @@ app.commandLine.appendSwitch('ignore-gpu-blacklist')
 
 const SVTPLAY_URL = 'https://www.svtplay.se/'
 
+function extractURLFromArgv(argv) {
+  // Support CLI: svtplay-app <url>
+  // Accept only http/https and prefer svtplay.se / svt.se domains
+  for (const a of argv.slice(1)) {
+    if (!a) continue
+    try {
+      const u = new URL(a)
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        if (u.hostname.endsWith('svtplay.se') || u.hostname.endsWith('svt.se')) {
+          return u.toString()
+        }
+      }
+    } catch {
+      // ignore non-URLs
+    }
+  }
+  return null
+}
+
+function isAllowedUrl(u) {
+  try {
+    const url = new URL(u)
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      (url.hostname.endsWith('svtplay.se') || url.hostname.endsWith('svt.se'))
+    )
+  } catch {
+    return false
+  }
+}
+
+function startControlServer() {
+  const host = '127.0.0.1'
+  const defaultPort = parseInt(process.env.SVTPLAY_CTL_PORT || '18492', 10)
+
+  const server = http.createServer(async (req, res) => {
+    const send = (code, bodyObj) => {
+      const body = JSON.stringify(bodyObj)
+      res.writeHead(code, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'Access-Control-Allow-Origin': '*'
+      })
+      res.end(body)
+    }
+
+    try {
+      const parsed = new NodeURL(req.url || '/', 'http://localhost')
+      const pathname = parsed.pathname || '/'
+
+      // No token/auth required; server is loopback-only
+
+      if (req.method === 'GET' && pathname === '/health') {
+        return send(200, { ok: true })
+      }
+      if (req.method === 'GET' && pathname === '/status') {
+        const w = BrowserWindow.getAllWindows()[0]
+        return send(200, { ok: true, url: w ? w.webContents.getURL() : null })
+      }
+      if (req.method === 'GET' && pathname === '/play') {
+        let target = parsed.searchParams.get('url') || ''
+        if (!isAllowedUrl(target)) {
+          return send(400, { ok: false, error: 'invalid_url' })
+        }
+        const w = BrowserWindow.getAllWindows()[0]
+        if (!w) return send(503, { ok: false, error: 'no_window' })
+        try {
+          await w.loadURL(target)
+          return send(200, { ok: true, url: target })
+        } catch (e) {
+          return send(500, { ok: false, error: 'navigation_failed' })
+        }
+      }
+
+      return send(404, { ok: false, error: 'not_found' })
+    } catch (e) {
+      return send(500, { ok: false, error: 'exception' })
+    }
+  })
+
+  // Attempt to listen on the configured port and fail fast if unavailable
+  return new Promise((resolve, reject) => {
+    const onListening = () => {
+      const addr = server.address()
+      const actualPort = typeof addr === 'object' && addr ? addr.port : defaultPort
+      console.log(`[svtplay-app] control server listening on http://${host}:${actualPort}`)
+      cleanup()
+      resolve({ server, port: actualPort })
+    }
+    const onError = (err) => {
+      // Do not fallback to a random port; abort startup instead
+      cleanup()
+      try { server.close(() => {}) } catch {}
+      reject(err)
+    }
+    const cleanup = () => {
+      server.off('listening', onListening)
+      server.off('error', onError)
+    }
+
+    server.once('listening', onListening)
+    server.once('error', onError)
+    server.listen(defaultPort, host)
+  })
+}
+
 /**
  * Create the main application window and load svtplay.se
  */
-async function createWindow() {
+async function createWindow(initialUrl) {
   const appPath = app.getAppPath()
   const iconPath = path.join(appPath, 'assets', 'icon.png')
   const hasIcon = fs.existsSync(iconPath)
@@ -127,6 +235,10 @@ async function createWindow() {
           win.__suppressSpatial += 2
           sendKey('ArrowDown', { pressOnly: true })
           return
+        case 'Numpad5':
+          // Play/pause on many players uses Space
+          sendKey('Space', { pressOnly: true })
+          return
         case 'Numpad3':
           sendKey('Tab', { pressOnly: true })
           return
@@ -135,6 +247,14 @@ async function createWindow() {
           win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Shift' })
           sendKey('Tab', { pressOnly: true, modifiers: ['shift'] })
           win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Shift' })
+          return
+        case 'Numpad7':
+          // Map to 'J' key, which jumps backwards 
+          sendKey('J', { pressOnly: true })
+          return
+        case 'Numpad9':
+          // Map to 'L' key, which jumps forwards
+          sendKey('L', { pressOnly: true })
           return
         default:
           // Let other numpad keys pass through as-is (digits)
@@ -184,7 +304,8 @@ async function createWindow() {
   const baseUA = win.webContents.getUserAgent()
   const ua = baseUA.replace(/Electron\/[\d.]+\s?/, '') // some sites dislike the Electron token
 
-  await win.loadURL(SVTPLAY_URL, {
+  const startUrl = initialUrl || extractURLFromArgv(process.argv) || SVTPLAY_URL
+  await win.loadURL(startUrl, {
     userAgent: ua
   })
 
@@ -319,6 +440,8 @@ async function createWindow() {
     })();`)
   } catch {}
 
+  // Load only; do not attempt to auto-play via injected JS
+
 }
 
 // Minimal permissions policy for this app
@@ -330,16 +453,46 @@ function setupPermissions() {
   })
 }
 
-app.whenReady().then(() => {
-  setupPermissions()
-  createWindow()
+// Single-instance handling so subsequent launches with a URL pass it to the first instance
+const gotLock = app.requestSingleInstanceLock()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (event, argv) => {
+    const url = extractURLFromArgv(argv)
+    const [win] = BrowserWindow.getAllWindows()
+    if (win) {
+      if (url) {
+        win.loadURL(url).catch(() => {})
+      }
+      if (win.isMinimized()) win.restore()
+      win.focus()
     }
   })
-})
+
+  app.whenReady().then(() => {
+    setupPermissions()
+    // Ensure control server is up before creating any windows
+    startControlServer()
+      .then(() => {
+        createWindow()
+      })
+      .catch((err) => {
+        const port = process.env.SVTPLAY_CTL_PORT || '18492'
+        const reason = (err && err.code) ? err.code : (err ? String(err) : 'unknown')
+        console.error(`[svtplay-app] failed to start control server on port ${port}: ${reason}`)
+        // Abort application startup if control server cannot bind the configured port
+        app.exit(1)
+      })
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

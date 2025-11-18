@@ -40,3 +40,4 @@ Project Structure
 - `src/main.js` – Electron main process (creates the window)
 - `src/preload.js` – Isolated preload (exposes a tiny API if needed)
 - `package.json` – App metadata and scripts
+

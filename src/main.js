@@ -447,9 +447,18 @@ async function createWindow(initialUrl) {
 // Minimal permissions policy for this app
 function setupPermissions() {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    // SVT Play typically doesn't need privileged permissions; deny by default
-    const allowed = new Set([])
-    callback(allowed.has(permission))
+    // Deny by default; selectively allow for trusted SVT origins.
+    let allow = false
+    try {
+      const url = new URL(webContents.getURL())
+      const isSVT = url.hostname.endsWith('svtplay.se') || url.hostname.endsWith('svt.se')
+      if (isSVT && permission === 'fullscreen') {
+        allow = true
+      }
+    } catch {
+      // fall through: deny
+    }
+    callback(allow)
   })
 }
 
